@@ -308,6 +308,8 @@ class DetectionModel(BaseModel):
             self.yaml["backbone"][0][2] = "nn.Identity"
 
         # Define model
+        # 这里比较巧妙，如果 yaml 文件中没有定义 ch 参数，
+        # 则使用 get 获取默认的参数，对 ch 进行赋值，并且更新 yaml 字典
         ch = self.yaml["ch"] = self.yaml.get("ch", ch)  # input channels
         if nc and nc != self.yaml["nc"]:
             LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
@@ -936,29 +938,37 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
     nc, act, scales = (d.get(x) for x in ("nc", "activation", "scales"))
     depth, width, kpt_shape = (d.get(x, 1.0) for x in ("depth_multiple", "width_multiple", "kpt_shape"))
     if scales:
-        scale = d.get("scale")
+        scale = d.get("scale")  # 选择 scale 关键字对应的 scales 值
         if not scale:
             scale = tuple(scales.keys())[0]
             LOGGER.warning(f"WARNING ⚠️ no model scale passed. Assuming scale='{scale}'.")
         depth, width, max_channels = scales[scale]
 
     if act:
+        # 作者在 ultralytics/nn/modules/conv.py 路径下重定义了 conv module，
+        # 方便同一管理conv的特性
         Conv.default_act = eval(act)  # redefine default activation, i.e. Conv.default_act = nn.SiLU()
         if verbose:
             LOGGER.info(f"{colorstr('activation:')} {act}")  # print
 
     if verbose:
         LOGGER.info(f"\n{'':>3}{'from':>20}{'n':>3}{'params':>10}  {'module':<45}{'arguments':<30}")
-    ch = [ch]
+    ch = [ch]  # 输入的ch为ch list中的第一个ch值
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
+        # 对于 yaml 中模块进行解析
+        # 1. 如果是 nn. 下的，getattr 获得对应的模块
+        # 2. 如果是自定义，从 globals 中获取对应模块
         m = getattr(torch.nn, m[3:]) if "nn." in m else globals()[m]  # get module
+        # args 对应 yaml 是相应的 list
         for j, a in enumerate(args):
             if isinstance(a, str):
                 with contextlib.suppress(ValueError):
+                # 上下文管理器，用于抑制ValueError异常，跳过单纯字符串
                     args[j] = locals()[a] if a in locals() else ast.literal_eval(a)
 
         n = n_ = max(round(n * depth), 1) if n > 1 else n  # depth gain
+        # 根据模块不同，对参数进行处理
         if m in {
             Classify,
             Conv,
